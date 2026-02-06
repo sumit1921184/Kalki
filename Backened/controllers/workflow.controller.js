@@ -1,69 +1,35 @@
 const Workflow = require("../models/workflow.model");
 const Execution = require("../models/execution.model");
 const { sendEmail } = require("../services/email.service");
-require("dotenv").config();
+const { workflowQueue } = require("../queues/workflowQueue");
+const userModel = require("../models/user.model");
+
 
 exports.executeWorkflow = async (req, res) => {
-    const workflowId = req.params.id;
-
-    const workflow = await Workflow.findById(workflowId);
+    const workflow = await Workflow.findById(req.params.id);
+    const user = await userModel.findById(req.user.id);
     if (!workflow) {
         return res.status(404).json({ message: "Workflow not found" });
     }
-
-    // Create execution record
-    const execution = await Execution.create({
+    const job = await workflowQueue.add("send-email", {
         workflowId: workflow._id,
-        userId: req.user,
-        status: "running",
-        logs: []
+        userId: user.id
     });
+    console.log(user.id);
+    console.log(user.email);
+    console.log("JOB ADDED:", job.id);
 
-    // Sort actions by order
-    const actions = workflow.actions.sort((a, b) => a.order - b.order);
+    res.json({ message: "Workflow queued successfully" });
+    const waiting = await workflowQueue.getWaiting();
+    const active = await workflowQueue.getActive();
+    const completed = await workflowQueue.getCompleted();
+    const failed = await workflowQueue.getFailed();
 
-    for (let action of actions) {
-        try {
-            if (action.type === "send_email") {
-                await sendEmail({
-                    to: action.config.to,
-                    subject: "Automation Email",
-                    text: "Hello! Sent via Mini Zapier"
-                });
-            }
+    console.log("ACTIVE FULL DATA:", active.map(j => j.data));
 
-            execution.logs.push({
-                step: action.order,
-                actionType: action.type,
-                status: "success",
-                message: "Action executed successfully"
-            });
 
-            await execution.save();
+};
 
-            return res.json({
-                message: "Workflow executed successfully",
-                execution
-            });
-
-        } catch (err) {
-            execution.logs.push({
-                step: action.order,
-                actionType: action.type,
-                status: "failed",
-                message: err.message
-            });
-
-            execution.status = "failed";
-            await execution.save();
-
-            return res.status(500).json({
-                message: "Workflow failed at step " + action.order,
-                execution
-            });
-        }
-    }
-}
 
 
 
